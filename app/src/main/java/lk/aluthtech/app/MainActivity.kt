@@ -5,6 +5,7 @@ import android.app.DownloadManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.net.ConnectivityManager
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
@@ -30,12 +31,27 @@ class MainActivity : AppCompatActivity() {
     private lateinit var progress: ProgressBar
 
     private val homeUrl = "https://aluthtechfeed.blogspot.com/"
+    private val mainHost = "aluthtechfeed.blogspot.com"
 
     // Blogger may redirect to a country domain (e.g. aluthtechfeed.blogspot.lk), so match by prefix.
     private fun isInternal(uri: Uri): Boolean {
         val host = uri.host ?: return false
-        return host.startsWith("aluthtechfeed.blogspot.") ||
-            host == "aluthtech.com" || host.endsWith(".aluthtech.com")
+        return host.startsWith("aluthtechfeed.blogspot.")
+    }
+
+    // Old domain (aluthtech.com) no longer exists: send those links to the blogspot site, same path.
+    private fun fixLegacyUrl(uri: Uri): Uri? {
+        val host = uri.host ?: return null
+        if (host == "aluthtech.com" || host.endsWith(".aluthtech.com")) {
+            return uri.buildUpon().scheme("https").authority(mainHost).build()
+        }
+        return null
+    }
+
+    @Suppress("DEPRECATION")
+    private fun isOnline(): Boolean {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        return cm.activeNetworkInfo?.isConnected == true
     }
 
     // Hides the "Download APK" button on the site, since the user is already in the app.
@@ -76,6 +92,13 @@ class MainActivity : AppCompatActivity() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val uri = request.url
                 if (uri.scheme == "file") return false
+
+                val fixed = fixLegacyUrl(uri)
+                if (fixed != null) {
+                    view.loadUrl(fixed.toString())
+                    return true
+                }
+
                 if ((uri.scheme == "http" || uri.scheme == "https") && isInternal(uri)) return false
                 return try {
                     startActivity(Intent(Intent.ACTION_VIEW, uri))
@@ -96,7 +119,8 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-                if (request.isForMainFrame) {
+                // Show the offline page only when there is really no internet.
+                if (request.isForMainFrame && !isOnline()) {
                     view.loadUrl("file:///android_asset/offline.html")
                 }
             }
